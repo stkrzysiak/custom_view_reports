@@ -2,15 +2,8 @@
 
 /**
  * @file
- * Custom reports for civicrm grants
+ * Custom reports for myboosters
  *
- * But doesn't civi have reports?  Doesn't civicrm integrate with views?  Yes to both.  The former has limitations as to what 
- * fields can be set as filters.  Free form fields could not be set as filters, which killed half the report functionality we needed for client.
- * We decided to use views & civicrm views integration but civicrm currently does not have handlers for Grants.  A view custom field was not    * possible due to multiple grants per contact.
- *
- * The proper and logical approach was to use views_query_alter to add a JOIN statement on the grants table and grab our additional fields. 
- * However, this process seemed to break down in views.inc on $this->query->query().  The only alternative without wrestling with views more was * to create this module that queries the DBs, 
- * prints the results, and adds an exposed form for filtering.  -Steve Krzysiak Oct, 13th, 2011
  */ 
 
 /**
@@ -29,26 +22,9 @@ function custom_view_reports_menu() {
     'description'      => 'Customized reports for your needs',
     'type' => MENU_CALLBACK,
   ); 
-    $items['reporting/custom/download'] = array(  //this may be unnecessary 
-    'title'            => 'Awards',
-    'page callback'    => 'custom_view_reports_download',
-    'access arguments' => array('access content'),
-    'description'      => 'Download a csv or doc file of the results.',
-    'type' => MENU_CALLBACK,
-  ); 
 
-  /* this doesnt work for instances where only one arg is in the url, ie reports/%  see code at about 1am october 13th to see original state where this failed */
-  /*
-  $items['award-reports/%/%/%'] = array(
-    'title'            => 'Awards  ',
-    'page callback'    => 'custom_view_reports_load',
-    'page arguments'   => array(1,2,3),
-    'access arguments' => array('access content'),
-    'description'      => 'A reporting api for the civicrm environment',
-    'type' => MENU_CALLBACK,
-  );  */
-  $items['admin/settings/civicrm-reporting'] = array(
-    'title' => t('Civicrm Report Settings'),
+  $items['admin/settings/myboosters-reporting'] = array(
+    'title' => t('Myboosters Report Settings'),
     'description' => t('Adjust your reporting settings'),
     'page callback' => 'drupal_get_form',
     'page arguments' => array('custom_view_reports_admin'),
@@ -134,94 +110,40 @@ print "lets do some downloading";
  * TODOS: make the queries safe using placeholders
  */
 function custom_view_reports_load($args=NULL, $filter=NULL, $param='')  {
+ $default_message = "Dear Friends and Family,\n\nI am part of a fundraiser on myBoosters.com to help raise money for my cause. I'm currently doing my best in school and working hard in the organization, and I really want to do my best in this fundraiser. We are all trying our best to raise money very quickly.\n\n All help is appreciated! And if you really want to help, please also sign up as a supporter and send your page to your friends and family.";
+  $select_query = "SELECT contactname, city, profile_state, message, boosteruser.pageurl as pageurl, FROM_UNIXTIME(users.created) AS created
+                   FROM boosteruser
+                   JOIN booster 
+                   ON booster.nid = boosteruser.coach_id 
+                   JOIN users 
+                   ON users.uid = boosteruser.uid
+                   WHERE bid=87";
 
-  $debug = variable_get('custom_view_reports_debug', FALSE);
-  $args_total= count(arg());
-
-  //page_view or file download?  
-  if (arg($args_total-2)=='download')  {
-  $dl=TRUE;
-  $type=arg($args_total-1);
-  }
-
-  //arg is used due to /%/%/% failing on single paramter calls, like: reporting/custom/awards
-  $filter=arg(2);  //what to filter the data on
-  $param=arg(3);  //the user provided variable
-  if ($filter)  {
-    switch ($filter)  {
-      case 'chapter':
-        $filter_suffix=" AND civicrm_value_individual_1.reporting_chapter_376 LIKE'%$param%'";
-        break;
-      case 'school':
-        $filter_suffix=" AND civicrm_contact_civicrm_relationship.organization_name LIKE '%$param%'";
-        break;
-      case 'first_name':
-        $filter_suffix=" AND civicrm_contact.first_name LIKE '%$param%'";
-        break;
-      case 'last_name':
-        $filter_suffix=" AND civicrm_contact.last_name LIKE '%$param%'";
-        break;
-      case 'year':
-        $filter_suffix=custom_view_reports_year_range_sql($param);
-      break;
-      default:
-      break;
-    }
-  }
-  $db_name = variable_get('custom_view_reports_db_name', 'custommulti_scholarciviDB');
-  if ($debug)  {
-    watchdog('custom_views_reports', 'civi db being used=>' . $db_name);
-  }
-  $query="SELECT DISTINCT(civicrm_contact.id) AS id,  
-   civicrm_contact.last_name AS lastname,
-   civicrm_contact.first_name AS firstname,
-   civicrm_email.email AS email,
-   civicrm_value_individual_1.reporting_chapter_376 AS reporting_chapter,
-   civicrm_contact_civicrm_relationship.organization_name AS org, 
-   civicrm_grant.amount_total AS amount, 
-   civicrm_grant.decision_date AS date
-   FROM $db_name.civicrm_contact civicrm_contact 
-   LEFT JOIN $db_name.civicrm_relationship civicrm_relationship ON civicrm_contact.id = civicrm_relationship.contact_id_a
-   LEFT JOIN $db_name.civicrm_contact civicrm_contact_civicrm_relationship ON civicrm_relationship.contact_id_b = civicrm_contact_civicrm_relationship.id
-   LEFT JOIN $db_name.civicrm_group_contact civicrm_group_contact ON civicrm_contact.id = civicrm_group_contact.contact_id
-   LEFT JOIN $db_name.civicrm_group civicrm_group ON civicrm_group_contact.group_id = civicrm_group.id
-   LEFT JOIN $db_name.civicrm_email civicrm_email ON civicrm_contact.id = civicrm_email.contact_id
-   LEFT JOIN $db_name.civicrm_value_individual_1 civicrm_value_individual_1 ON civicrm_contact.id = civicrm_value_individual_1.entity_id
-   LEFT JOIN $db_name.civicrm_grant civicrm_grant ON civicrm_contact.id = civicrm_grant.contact_id
-   WHERE civicrm_group.title in ('Scholar or Scholar Alum')" . $filter_suffix . "
-   GROUP BY civicrm_contact.id";
-  
-  
-   $count_query="SELECT count( DISTINCT(civicrm_contact.id) )
-   FROM $db_name.civicrm_contact civicrm_contact 
-   LEFT JOIN $db_name.civicrm_relationship civicrm_relationship ON civicrm_contact.id = civicrm_relationship.contact_id_a
-   LEFT JOIN $db_name.civicrm_contact civicrm_contact_civicrm_relationship ON civicrm_relationship.contact_id_b = civicrm_contact_civicrm_relationship.id
-   LEFT JOIN $db_name.civicrm_group_contact civicrm_group_contact ON civicrm_contact.id = civicrm_group_contact.contact_id
-   LEFT JOIN $db_name.civicrm_group civicrm_group ON civicrm_group_contact.group_id = civicrm_group.id
-   LEFT JOIN $db_name.civicrm_email civicrm_email ON civicrm_contact.id = civicrm_email.contact_id
-   LEFT JOIN $db_name.civicrm_value_individual_1 civicrm_value_individual_1 ON civicrm_contact.id = civicrm_value_individual_1.entity_id
-   LEFT JOIN $db_name.civicrm_grant civicrm_grant ON civicrm_contact.id = civicrm_grant.contact_id
-   WHERE civicrm_group.title in ('Scholar or Scholar Alum')" . $filter_suffix;
-
+  $count_query = "SELECT COUNT(*) 
+                   FROM `boosteruser` 
+                   JOIN booster 
+                   ON booster.nid = boosteruser.coach_id 
+                   WHERE bid=87";
    
   $headers = array(
-    array('data' => t('First Name'), 'field' => 'civicrm_contact.first_name'),
-    array('data' => t('Last Name'), 'field' => 'civicrm_contact.last_name', 'sort' => 'asc'),
-    array('data' => t('Email'), 'field' => 'civicrm_email.email'),
-    array('data' => t('Chapter'), 'field' => 'civicrm_value_individual_1.reporting_chapter_376'),
-    array('data' => t('School'), 'field' => 'civicrm_contact_civicrm_relationship.organization_name'),
-    array('data' => t('Amount'), 'field' => 'civicrm_grant.amount_total'),
-    array('data' => t('Year'), 'field' => 'civicrm_grant.decision_date'),
+    array('data' => t('Contact Name'), 'field' => 'contactname'),
+    array('data' => t('City'), 'field' => 'city'),
+    array('data' => t('State'), 'field' => 'profile_state'),
+    array('data' => t('Message'), 'field' => 'message'),
+    array('data' => t('Page Url'), 'field' => 'pageurl'),
+    array('data' => t('Created On'), 'field' => 'created', 'sort'=>'asc'),
+    array('data' => t('Arbitrary'), 'text' => 'la-di-da')
     );
-  $limit=variable_get('custom_view_reports_pager', '10');
+  $limit=variable_get('custom_view_reports_pager', '30');
   $tablesort = tablesort_sql($headers);
-  
-  $results = pager_query($query . $tablesort, $limit, 0, $count_query);
+  //dpm($select_query); dpm($tablesort); 
+  //print $select_query . $tablesort . '<br>' . $count_query;
+  $results = pager_query($select_query . $tablesort, $limit, 0, $count_query);
   if ($debug)  {
-    watchdog('custom_views_reports' , 'query is=>' . $query);
-    watchdog('custom_views_reports' , 'table sort query is=>' . $tablesort);
-    watchdog('custom_views_reports' , 'pager_query=>' . $query . $tablesort);
-    watchdog('custom_views_reports' , 'count query =>' . $count_query);
+    watchdog('mybooster_reports' , 'query is=>' . $query);
+    watchdog('mybooster_reports' , 'table sort query is=>' . $tablesort);
+    watchdog('mybooster_reports' , 'pager_query=>' . $query . $tablesort);
+    watchdog('mybooster_reports' , 'count query =>' . $count_query);
   }
    
   $rows=array();
@@ -229,7 +151,10 @@ function custom_view_reports_load($args=NULL, $filter=NULL, $param='')  {
   while ($result = db_fetch_object($results)) { 
     $count++;
     if (!$dl)  {
-      array_push($rows, array($result->firstname, $result->lastname, $result->email, $result->reporting_chapter, $result->org, number_format($result->amount), substr($result->date, 0, 4)));
+      $page_url = "<a href='/". $result->pageurl . "'>See Page</a>";
+      //print "IS <br> $default_message <br>EQUAL to <br> $result->message "; die();
+      $message = strcmp($default_message,$result->message) ? 'Same' : $page_url;
+      array_push($rows, array($result->contactname, $result->city, $result->profile_state, $message, $result->pageurl, $result->created, 'magicsauce'));
     }
     if (($dl)&&($type=='doc'))  {
       array_push($rows, array($result->firstname, $result->lastname, $result->email, $result->reporting_chapter, $result->org, number_format($result->amount), substr($result->date, 0, 4)));
@@ -240,20 +165,21 @@ function custom_view_reports_load($args=NULL, $filter=NULL, $param='')  {
   }
 
   if (($dl)&&($type=='csv'))  {
-    return custom_views_reports_export_file($headers, $csv, $type);
+    return mybooster_reports_export_file($headers, $csv, $type);
   }
   elseif (($dl)&&($type=='doc'))  {
     $html .= theme('table', $headers, $rows);
-    return custom_views_reports_export_file($headers, $html, $type);
+    return mybooster_reports_export_file($headers, $html, $type);
   }
   else {
+    global $base_url;
     $html = drupal_get_form('custom_view_reports_form');
     $html .= theme('table', $headers, $rows);
     $html .= theme('pager');
-    $path=get_uri() . '/download';
+    $path=$base_url . '/' .  '/download';
     $path='http://' . $_SERVER['SERVER_NAME'] . '/' . $path;
-    $html .= '<div="custom_views_reports_dl_cs">'.l('CSV', $path . '/csv/') . '</div>';
-    $html .= '<div="custom_views_reports_dl_cs">'.l('DOC', $path . '/doc/') . '</div>';
+    $html .= '<div="mybooster_reports_dl_cs">'.l('CSV', $path . '/csv/') . '</div>';
+    $html .= '<div="mybooster_reports_dl_cs">'.l('DOC', $path . '/doc/') . '</div>';
     
     return $html;
   }
@@ -261,11 +187,11 @@ function custom_view_reports_load($args=NULL, $filter=NULL, $param='')  {
 }
 
 
-function custom_views_reports_export_file($headers, $rows, $type) { 
+function mybooster_reports_export_file($headers, $rows, $type) { 
   $filename = 'custom_report-' . date('m-d-Y-g-i-s') . '.' . $type;
   $header = NULL;
   // Create  within the files folder.
-  $csvpath = file_create_path('custom_views_reports_export');
+  $csvpath = file_create_path('mybooster_reports_export');
   file_check_directory($csvpath, FILE_CREATE_DIRECTORY);
   $file = $csvpath .'/'. $filename;
   // Build CSV file.  "a" means we are opening to append, creating if needed.
@@ -299,59 +225,10 @@ function custom_view_reports_form() {
     '#submit' => array('custom_view_reports_submit')
   );
 
-  $form['civicrm_school'] = array(
-    '#type' => 'textfield',
-    '#title' => t('School'),
-    '#size' => 35,
-    '#maxlength' => 35,
-    '#required' => FALSE,
-  );
-
-   $form['civicrm_chapter'] = array(
-    '#type' => 'textfield',
-    '#title' => t('Chapter'),
-    '#size' => 35,
-    '#maxlength' => 35,
-    '#required' => FALSE,
-  );
-
-   $form['civicrm_first_name'] = array(
-    '#type' => 'textfield',
-    '#title' => t('First Name'),
-    '#size' => 35,
-    '#maxlength' => 35,
-    '#required' => FALSE,
-  );
-   $form['civicrm_last_name'] = array(
-       '#type' => 'textfield',
-       '#title' => t('Last Name'),
-       '#size' => 35,
-       '#maxlength' => 35,
-       '#required' => FALSE,
-   );
-   $form['awards_year'] = array(
-    '#type' => 'textfield',
-    '#title' => t('Year(From)'),
-    '#size' => 4,
-    '#maxlength' => 4,
-    '#required' => FALSE,
-  );
-   $form['awards_year_range'] = array(
-    '#type' => 'textfield',
-    '#title' => t('Year(To)'),
-    '#size' => 4,
-    '#maxlength' => 4,
-    '#required' => FALSE,
-  );
 
   $form['submit'] = array(
     '#type' => 'submit',
     '#value' => t('Filter'),
-  );
-  $form['cancel'] = array(
-    '#type' => 'button',
-    '#attributes' => array('onClick' => 'location.replace("'. referer_uri() .'"); return false;'),
-    '#value' => t('Reset'),
   );
   
 

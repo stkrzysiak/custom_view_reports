@@ -1,4 +1,5 @@
 name = Custom View Reports
 description = "CivicrReports didnt meet our needs, Views with Civicrm views handlers didnt cover Grants/Awards, so here you have the basic template for crafting your own 'views'"
 core = 6.x
+package = MyBoosters
 
